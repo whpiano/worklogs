@@ -1,0 +1,143 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { execSync } from 'child_process';
+
+// 动态导入 coze-coding-dev-sdk（兼容 Vercel 等缺失该 SDK 的环境）
+let getReportBuffer: () => any = () => null;
+let createWrappedFetch: ((buffer: any, name: string) => typeof fetch) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const sdk = require('coze-coding-dev-sdk');
+  getReportBuffer = sdk.getReportBuffer || getReportBuffer;
+  createWrappedFetch = sdk.createWrappedFetch || null;
+} catch {
+  // coze-coding-dev-sdk 不可用（如 Vercel 环境）
+}
+
+let envLoaded = false;
+
+interface SupabaseCredentials {
+  url: string;
+  anonKey: string;
+}
+
+function loadEnv(): void {
+  if (envLoaded || (process.env.COZE_SUPABASE_URL && process.env.COZE_SUPABASE_ANON_KEY)) {
+    return;
+  }
+
+  // 只尝试从环境变量读取（Vercel 上直接配置环境变量，不需要 dotenv 或 coze_workload_identity）
+  try {
+    try {
+      require('dotenv').config();
+      if (process.env.COZE_SUPABASE_URL && process.env.COZE_SUPABASE_ANON_KEY) {
+        envLoaded = true;
+        return;
+      }
+    } catch {
+      // dotenv not available
+    }
+
+    // 仅在非 Vercel 环境下尝试 coze_workload_identity
+    if (!process.env.VERCEL) {
+      const pythonCode = `
+import os
+import sys
+try:
+    from coze_workload_identity import Client
+    client = Client()
+    env_vars = client.get_project_env_vars()
+    client.close()
+    for env_var in env_vars:
+        print(f"{env_var.key}={env_var.value}")
+except Exception as e:
+    print(f"# Error: {e}", file=sys.stderr)
+`;
+
+      const output = execSync(`python3 -c '${pythonCode.replace(/'/g, "'\"'\"'")}'`, {
+        encoding: 'utf-8',
+        timeout: 10000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const lines = output.trim().split('\n');
+      for (const line of lines) {
+        if (line.startsWith('#')) continue;
+        const eqIndex = line.indexOf('=');
+        if (eqIndex > 0) {
+          const key = line.substring(0, eqIndex);
+          let value = line.substring(eqIndex + 1);
+          if ((value.startsWith("'") && value.endsWith("'")) ||
+              (value.startsWith('"') && value.endsWith('"'))) {
+            value = value.slice(1, -1);
+          }
+          if (!process.env[key]) {
+            process.env[key] = value;
+          }
+        }
+      }
+    }
+
+    envLoaded = true;
+  } catch {
+    // Silently fail
+  }
+}
+
+function getSupabaseCredentials(): SupabaseCredentials {
+  loadEnv();
+
+  const url = process.env.COZE_SUPABASE_URL;
+  const anonKey = process.env.COZE_SUPABASE_ANON_KEY;
+
+  if (!url) {
+    throw new Error('COZE_SUPABASE_URL is not set');
+  }
+  if (!anonKey) {
+    throw new Error('COZE_SUPABASE_ANON_KEY is not set');
+  }
+
+  return { url, anonKey };
+}
+
+function getSupabaseServiceRoleKey(): string | undefined {
+  loadEnv();
+  return process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+}
+
+function getSupabaseClient(token?: string): SupabaseClient {
+  const { url, anonKey } = getSupabaseCredentials();
+
+  let key: string;
+  if (token) {
+    key = anonKey;
+  } else {
+    const serviceRoleKey = getSupabaseServiceRoleKey();
+    key = serviceRoleKey ?? anonKey;
+  }
+
+  const globalOptions: Record<string, any> = {};
+  if (token) {
+    globalOptions.headers = { Authorization: `Bearer ${token}` };
+  }
+  try {
+    const buffer = getReportBuffer();
+    if (buffer && createWrappedFetch) {
+      globalOptions.fetch = createWrappedFetch(buffer, 'supabase');
+    }
+  } catch {
+    // Silent — reporting setup failure should not block client creation
+  }
+
+  return createClient(url, key, {
+    global: globalOptions,
+    db: {
+      timeout: 60000,
+    },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+export { loadEnv, getSupabaseCredentials, getSupabaseServiceRoleKey, getSupabaseClient };

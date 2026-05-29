@@ -160,6 +160,3 @@ Desktop.ini
 # Misc
 .coze-logs
 .preview
-
-.vercel
-.env*
