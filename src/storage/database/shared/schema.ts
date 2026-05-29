@@ -42,3 +42,19 @@ export const taskCompletions = pgTable(
 		index("task_completions_completed_date_idx").on(table.completedDate),
 	]
 );
+
+export const bookmarks = pgTable(
+	"bookmarks",
+	{
+		id: serial("id").primaryKey(),
+		name: varchar("name", { length: 255 }).notNull(),
+		url: text("url").notNull(),
+		category: varchar("category", { length: 100 }).notNull().default("未分类"),
+		note: text("note"),
+		createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+	},
+	(table) => [
+		index("bookmarks_category_idx").on(table.category),
+	]
+);
