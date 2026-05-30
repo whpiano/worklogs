@@ -1,7 +1,6 @@
 import { pgTable, serial, integer, timestamp, varchar, text, boolean, date, index } from "drizzle-orm/pg-core"
+import { relations } from "drizzle-orm"
 import { sql } from "drizzle-orm"
-
-
 
 export const healthCheck = pgTable("health_check", {
 	id: serial().notNull(),
@@ -43,18 +42,55 @@ export const taskCompletions = pgTable(
 	]
 );
 
+export const categories = pgTable(
+	"categories",
+	{
+		id: serial("id").primaryKey(),
+		name: varchar("name", { length: 100 }).notNull().unique(),
+		createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+	}
+);
+
 export const bookmarks = pgTable(
 	"bookmarks",
 	{
 		id: serial("id").primaryKey(),
 		name: varchar("name", { length: 255 }).notNull(),
 		url: text("url").notNull(),
-		category: varchar("category", { length: 100 }).notNull().default("未分类"),
 		note: text("note"),
 		createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 		updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+	}
+);
+
+export const bookmarkCategories = pgTable(
+	"bookmark_categories",
+	{
+		id: serial("id").primaryKey(),
+		bookmarkId: integer("bookmark_id").notNull().references(() => bookmarks.id, { onDelete: "cascade" }),
+		categoryId: integer("category_id").notNull().references(() => categories.id, { onDelete: "cascade" }),
 	},
 	(table) => [
-		index("bookmarks_category_idx").on(table.category),
+		index("bookmark_categories_bookmark_id_idx").on(table.bookmarkId),
+		index("bookmark_categories_category_id_idx").on(table.categoryId),
 	]
 );
+
+export const bookmarksRelations = relations(bookmarks, ({ many }) => ({
+	categories: many(bookmarkCategories),
+}));
+
+export const categoriesRelations = relations(categories, ({ many }) => ({
+	bookmarks: many(bookmarkCategories),
+}));
+
+export const bookmarkCategoriesRelations = relations(bookmarkCategories, ({ one }) => ({
+	bookmark: one(bookmarks, {
+		fields: [bookmarkCategories.bookmarkId],
+		references: [bookmarks.id],
+	}),
+	category: one(categories, {
+		fields: [bookmarkCategories.categoryId],
+		references: [categories.id],
+	}),
+}));
